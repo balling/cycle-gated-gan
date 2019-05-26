@@ -159,7 +159,45 @@ def define_G(input_nc, output_nc, ngf, netG, norm='batch', use_dropout=False, in
     return init_net(net, init_type, init_gain, gpu_ids)
 
 
-def define_D(input_nc, ndf, netD, n_layers_D=3, norm='batch', init_type='normal', init_gain=0.02, gpu_ids=[]):
+def define_Gated_G(input_nc, input_nclass, output_nc, ngf, netG, norm='batch', use_dropout=False, init_type='normal', init_gain=0.02, gpu_ids=[]):
+    """Create a generator
+
+    Parameters:
+        input_nc (int) -- the number of channels in input images
+        output_nc (int) -- the number of channels in output images
+        ngf (int) -- the number of filters in the last conv layer
+        netG (str) -- the architecture's name: resnet_9blocks | resnet_6blocks | unet_256 | unet_128
+        norm (str) -- the name of normalization layers used in the network: batch | instance | none
+        use_dropout (bool) -- if use dropout layers.
+        init_type (str)    -- the name of our initialization method.
+        init_gain (float)  -- scaling factor for normal, xavier and orthogonal.
+        gpu_ids (int list) -- which GPUs the network runs on: e.g., 0,1,2
+
+    Returns a generator
+
+    Our current implementation provides two types of generators:
+        U-Net: [unet_128] (for 128x128 input images) and [unet_256] (for 256x256 input images)
+        The original U-Net paper: https://arxiv.org/abs/1505.04597
+
+        Resnet-based generator: [resnet_6blocks] (with 6 Resnet blocks) and [resnet_9blocks] (with 9 Resnet blocks)
+        Resnet-based generator consists of several Resnet blocks between a few downsampling/upsampling operations.
+        We adapt Torch code from Justin Johnson's neural style transfer project (https://github.com/jcjohnson/fast-neural-style).
+
+
+    The generator has been initialized by <init_net>. It uses RELU for non-linearity.
+    """
+    net = None
+    norm_layer = get_norm_layer(norm_type=norm)
+    if netG == 'gated_resnet_6blocks':
+        net = GatedResnetGenerator(input_nc, input_nclass, output_nc, ngf, False)
+    elif netG == 'auto_gated_resnet_6blocks':
+        net = GatedResnetGenerator(input_nc, input_nclass, output_nc, ngf, True)
+    else:
+        raise NotImplementedError('Generator model name [%s] is not recognized' % netG)
+    return init_net(net, init_type, init_gain, gpu_ids)
+
+
+def define_D(input_nc, ndf, netD, n_layers_D=3, norm='batch', init_type='normal', init_gain=0.02, gpu_ids=[], input_nclass=None):
     """Create a discriminator
 
     Parameters:
@@ -193,9 +231,9 @@ def define_D(input_nc, ndf, netD, n_layers_D=3, norm='batch', init_type='normal'
     norm_layer = get_norm_layer(norm_type=norm)
 
     if netD == 'basic':  # default PatchGAN classifier
-        net = NLayerDiscriminator(input_nc, ndf, n_layers=3, norm_layer=norm_layer)
+        net = NLayerDiscriminator(input_nc, ndf, n_layers=3, norm_layer=norm_layer, input_nclass=input_nclass)
     elif netD == 'n_layers':  # more options
-        net = NLayerDiscriminator(input_nc, ndf, n_layers_D, norm_layer=norm_layer)
+        net = NLayerDiscriminator(input_nc, ndf, n_layers_D, norm_layer=norm_layer, input_nclass=input_nclass)
     elif netD == 'pixel':     # classify if each pixel is real or fake
         net = PixelDiscriminator(input_nc, ndf, norm_layer=norm_layer)
     else:
@@ -312,6 +350,80 @@ def cal_gradient_penalty(netD, real_data, fake_data, device, type='mixed', const
     else:
         return 0.0, None
 
+class GatedResnetGenerator(nn.Module):
+    """Resnet-based generator that consists of Resnet blocks between a few downsampling/upsampling operations.
+
+    We adapt Torch code and idea from Justin Johnson's neural style transfer project(https://github.com/jcjohnson/fast-neural-style)
+    """
+
+    def __init__(self, input_nc, input_nclass, output_nc, ngf=64, use_identity=False, norm_layer=nn.BatchNorm2d, use_dropout=False, n_blocks=6, padding_type='reflect'):
+        """Construct a Resnet-based generator
+
+        Parameters:
+            input_nc (int)      -- the number of channels in input images
+            output_nc (int)     -- the number of channels in output images
+            ngf (int)           -- the number of filters in the last conv layer
+            norm_layer          -- normalization layer
+            use_dropout (bool)  -- if use dropout layers
+            n_blocks (int)      -- the number of ResNet blocks
+            padding_type (str)  -- the name of padding layer in conv layers: reflect | replicate | zero
+        """
+        assert(n_blocks >= 0)
+        super(ResnetGenerator, self).__init__()
+        if type(norm_layer) == functools.partial:
+            use_bias = norm_layer.func == nn.InstanceNorm2d
+        else:
+            use_bias = norm_layer == nn.InstanceNorm2d
+
+        encoder = [nn.ReflectionPad2d(3),
+                 nn.Conv2d(input_nc, ngf, kernel_size=7, padding=0, bias=use_bias),
+                 norm_layer(ngf),
+                 nn.ReLU(True)]
+
+        n_downsampling = 2
+        for i in range(n_downsampling):  # add downsampling layers
+            mult = 2 ** i
+            encoder += [nn.Conv2d(ngf * mult, ngf * mult * 2, kernel_size=3, stride=2, padding=1, bias=use_bias),
+                      norm_layer(ngf * mult * 2),
+                      nn.ReLU(True)]
+
+        # add transformer
+        self.transformers = [ResnetBlock(ngf * mult, padding_type=padding_type, norm_layer=norm_layer, use_dropout=use_dropout, use_bias=use_bias)
+            for i in input_nclass]
+        if use_identity:
+            self.transformers.append(nn.Identity())
+
+        decoder = []
+        mult = 2 ** n_downsampling
+        for i in range(n_blocks):       # add ResNet blocks
+
+            decoder += [ResnetBlock(ngf * mult, padding_type=padding_type, norm_layer=norm_layer, use_dropout=use_dropout, use_bias=use_bias)]
+
+        for i in range(n_downsampling):  # add upsampling layers
+            mult = 2 ** (n_downsampling - i)
+            decoder += [nn.ConvTranspose2d(ngf * mult, int(ngf * mult / 2),
+                                         kernel_size=3, stride=2,
+                                         padding=1, output_padding=1,
+                                         bias=use_bias),
+                      norm_layer(int(ngf * mult / 2)),
+                      nn.ReLU(True)]
+        decoder += [nn.ReflectionPad2d(3)]
+        decoder += [nn.Conv2d(ngf, output_nc, kernel_size=7, padding=0)]
+        decoder += [nn.Tanh()]
+
+        self.encoder = nn.Sequential(*encoder)
+        self.decoder = nn.Sequential(*decoder)
+
+    def forward(self, input, content_label):
+        # input (N, H, W, C)
+        # content_label (N, class)
+        # return value: (N, whatever output shape)
+        """Standard forward"""
+        encoded = self.encoder(input)
+        transformed = torch.stack([trans(encoded) for trans in self.transformers]) # (class, N, D)
+        # (N, 1, class) * (N, class, D) -> (N, 1, D) -> (N, D)
+        transformed = torch.matmul(content_label.float().unsqueeze(1), transformed.transpose(0, 1)).squeeze(1)
+        return self.decoder(transformed)
 
 class ResnetGenerator(nn.Module):
     """Resnet-based generator that consists of Resnet blocks between a few downsampling/upsampling operations.
@@ -539,7 +651,7 @@ class UnetSkipConnectionBlock(nn.Module):
 class NLayerDiscriminator(nn.Module):
     """Defines a PatchGAN discriminator"""
 
-    def __init__(self, input_nc, ndf=64, n_layers=3, norm_layer=nn.BatchNorm2d):
+    def __init__(self, input_nc, ndf=64, n_layers=3, norm_layer=nn.BatchNorm2d, input_nclass=None):
         """Construct a PatchGAN discriminator
 
         Parameters:
@@ -575,13 +687,19 @@ class NLayerDiscriminator(nn.Module):
             norm_layer(ndf * nf_mult),
             nn.LeakyReLU(0.2, True)
         ]
-
-        sequence += [nn.Conv2d(ndf * nf_mult, 1, kernel_size=kw, stride=1, padding=padw)]  # output 1 channel prediction map
+        self.nclass= input_nclass
         self.model = nn.Sequential(*sequence)
+        self.prediction = nn.Conv2d(ndf * nf_mult, 1, kernel_size=kw, stride=1, padding=padw) # output 1 channel prediction map
+        if input_nclass:
+            self.classifier = nn.Conv2d(ndf * nf_mult, input_nclass, kernel_size=kw, stride=1, padding=padw) # output n class channel prediction map
 
     def forward(self, input):
         """Standard forward."""
-        return self.model(input)
+        final_layer = self.model(input)
+        if self.nclass:
+            return self.prediction(final_layer), self.classifier(final_layer).transpose(2,4)
+        else:
+            return self.prediction(final_layer)
 
 
 class PixelDiscriminator(nn.Module):
