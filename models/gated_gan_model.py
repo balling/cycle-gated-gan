@@ -99,7 +99,7 @@ class GatedGANModel(BaseModel):
         self.real_A = input['A' if AtoB else 'B'].to(self.device)
         self.real_B = input['B' if AtoB else 'A'].to(self.device)
         self.class_label_B = input['B_style_labels'].to(self.device)
-        self.one_hot_label = torch.zeros(self.opt.batch_size, self.opt.n_style + 1)
+        self.one_hot_label = torch.zeros(self.opt.batch_size, self.opt.n_style + 1).to(self.device)
         self.one_hot_label.scatter_(1, self.class_label_B.unsqueeze(1), 1)
         self.image_paths = input['A_paths' if AtoB else 'B_paths']
 
