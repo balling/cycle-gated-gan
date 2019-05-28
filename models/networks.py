@@ -369,7 +369,7 @@ class GatedResnetGenerator(nn.Module):
             padding_type (str)  -- the name of padding layer in conv layers: reflect | replicate | zero
         """
         assert(n_blocks >= 0)
-        super(ResnetGenerator, self).__init__()
+        super(GatedResnetGenerator, self).__init__()
         if type(norm_layer) == functools.partial:
             use_bias = norm_layer.func == nn.InstanceNorm2d
         else:
@@ -388,8 +388,8 @@ class GatedResnetGenerator(nn.Module):
                       nn.ReLU(True)]
 
         # add transformer
-        self.transformers = [ResnetBlock(ngf * mult, padding_type=padding_type, norm_layer=norm_layer, use_dropout=use_dropout, use_bias=use_bias)
-            for i in input_nclass]
+        self.transformers = [ResnetBlock(ngf * mult * 2, padding_type=padding_type, norm_layer=norm_layer, use_dropout=use_dropout, use_bias=use_bias)
+            for i in range(input_nclass)]
         if use_identity:
             self.transformers.append(nn.Identity())
 
@@ -415,14 +415,15 @@ class GatedResnetGenerator(nn.Module):
         self.decoder = nn.Sequential(*decoder)
 
     def forward(self, input, content_label):
-        # input (N, H, W, C)
+        # input (N, C, H, W)
         # content_label (N, class)
         # return value: (N, whatever output shape)
         """Standard forward"""
         encoded = self.encoder(input)
         transformed = torch.stack([trans(encoded) for trans in self.transformers]) # (class, N, D)
+        n_style, batch_size, C, H, W = transformed.shape
         # (N, 1, class) * (N, class, D) -> (N, 1, D) -> (N, D)
-        transformed = torch.matmul(content_label.float().unsqueeze(1), transformed.transpose(0, 1)).squeeze(1)
+        transformed = torch.matmul(content_label.float().unsqueeze(1), transformed.view(n_style, batch_size, -1).transpose(0, 1)).squeeze(1).view(-1, C, H, W)
         return self.decoder(transformed)
 
 class ResnetGenerator(nn.Module):
@@ -697,7 +698,7 @@ class NLayerDiscriminator(nn.Module):
         """Standard forward."""
         final_layer = self.model(input)
         if self.nclass:
-            return self.prediction(final_layer), self.classifier(final_layer).transpose(2,4)
+            return self.prediction(final_layer), self.classifier(final_layer)
         else:
             return self.prediction(final_layer)
 

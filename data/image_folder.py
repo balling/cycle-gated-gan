@@ -31,6 +31,20 @@ def make_dataset(dir, max_dataset_size=float("inf")):
                 images.append(path)
     return images[:min(max_dataset_size, len(images))]
 
+def make_nested_dataset(dir, max_dataset_size=float("inf")):
+    images = [] # list of tuples of (img path, label)
+    labels = {}
+    assert os.path.isdir(dir), '%s is not a valid directory' % dir
+    for root, _, fnames in sorted(os.walk(dir)):
+        for fname in fnames:
+            if is_image_file(fname):
+                path = os.path.join(root, fname)
+                label = root.split('/')[-1]
+                images.append((path, label))
+            elif fname.endswith('.csv'):
+                label = root.split('/')[-1]
+                labels[label] = os.path.join(root, fname)
+    return images[:min(max_dataset_size, len(images))], labels
 
 def default_loader(path):
     return Image.open(path).convert('RGB')

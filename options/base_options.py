@@ -54,6 +54,10 @@ class BaseOptions():
         parser.add_argument('--load_iter', type=int, default='0', help='which iteration to load? if load_iter > 0, the code will load models by iter_[load_iter]; otherwise, the code will load models by [epoch]')
         parser.add_argument('--verbose', action='store_true', help='if specified, print more debugging information')
         parser.add_argument('--suffix', default='', type=str, help='customized suffix: opt.name = opt.name + suffix: e.g., {model}_{netG}_size{load_size}')
+        # gated gan parameters
+        parser.add_argument('--autoencoder_constraint', type=float, default=10, help='weight of autoencoder reconstruction loss')
+        parser.add_argument('--n_style', type=int, default=1, help='# of input styles')
+        parser.add_argument('--l2_loss', help='whether to use l2 loss for reconstruction loss')
         self.initialized = True
         return parser
 

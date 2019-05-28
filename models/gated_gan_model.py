@@ -65,12 +65,12 @@ class GatedGANModel(BaseModel):
             self.model_names = ['G_A']
 
         # define networks (both Generators and discriminators)
-        self.netG_A = networks.define_G(opt.input_nc, opt.output_nc, opt.ngf, opt.netG, opt.norm,
+        self.netG_A = networks.define_Gated_G(opt.input_nc, opt.n_style, opt.output_nc, opt.ngf, opt.netG, opt.norm,
                                         not opt.no_dropout, opt.init_type, opt.init_gain, self.gpu_ids)
 
         if self.isTrain:  # define discriminators
             self.netD_A = networks.define_D(opt.output_nc, opt.ndf, opt.netD,
-                                            opt.n_layers_D, opt.norm, opt.init_type, opt.init_gain, self.gpu_ids)
+                                            opt.n_layers_D, opt.norm, opt.init_type, opt.init_gain, self.gpu_ids, opt.n_style)
 
         if self.isTrain:
             self.autoflag = torch.zeros(opt.batch_size, opt.n_style + 1)
@@ -98,11 +98,9 @@ class GatedGANModel(BaseModel):
         AtoB = self.opt.direction == 'AtoB'
         self.real_A = input['A' if AtoB else 'B'].to(self.device)
         self.real_B = input['B' if AtoB else 'A'].to(self.device)
-        self.label_B = input['label'].to(self.device)
-        self.one_hot_label = None #TODO
-        self.class_label_B = None #TODO
-        # self.one_hot_label:copy(util.label2one_hot_label(self.label_B, self.one_hot_label))
-        # self.class_label_B:copy(util.label2tensor(self.label_B, self.class_label_B))
+        self.class_label_B = input['B_style_labels'].to(self.device)
+        self.one_hot_label = torch.zeros(self.opt.batch_size, self.opt.n_style + 1)
+        self.one_hot_label.scatter_(1, self.class_label_B.unsqueeze(1), 1)
         self.image_paths = input['A_paths' if AtoB else 'B_paths']
 
     def forward(self):
@@ -125,11 +123,13 @@ class GatedGANModel(BaseModel):
         """
         prediction, classification = self.netD_A(real)
         loss_d_real = self.criterionGAN(prediction, True)
-        loss_AC_real = self.criterionAC(classification, self.class_label_B)
+        N, _, H, W = classification.shape
+        expanded_label = self.class_label_B.unsqueeze(1).unsqueeze(2).expand(N, H, W)
+        loss_AC_real = self.criterionAC(classification, expanded_label)
 
         prediction, classification = self.netD_A(fake)
         loss_d_fake = self.criterionGAN(prediction, False)
-        loss_AC_fake = self.criterionAC(classification, self.class_label_B) # TODO: this was commented out in original implementation
+        loss_AC_fake = self.criterionAC(classification, expanded_label) # TODO: this was commented out in original implementation
         loss_D = (loss_d_real + loss_AC_real + loss_d_fake + loss_AC_fake) / 2
         loss_D.backward()
         return loss_D
@@ -150,7 +150,9 @@ class GatedGANModel(BaseModel):
         # gan loss
         prediction, classification = self.netD_A(self.fake_B)
         self.loss_g = self.criterionGAN(prediction, True)
-        self.loss_AC = self.criterionAC(classification, self.class_label_B)
+        N, _, H, W = classification.shape
+        expanded_label = self.class_label_B.unsqueeze(1).unsqueeze(2).expand(N, H, W)
+        self.loss_AC = self.criterionAC(classification, expanded_label)
 
         self.loss_G = self.loss_g + self.loss_AC * lambda_A
         self.loss_G.backward()
