@@ -388,10 +388,11 @@ class GatedResnetGenerator(nn.Module):
                       nn.ReLU(True)]
 
         # add transformer
-        self.transformers = [ResnetBlock(ngf * mult * 2, padding_type=padding_type, norm_layer=norm_layer, use_dropout=use_dropout, use_bias=use_bias)
+        transformers = [ResnetBlock(ngf * mult * 2, padding_type=padding_type, norm_layer=norm_layer, use_dropout=use_dropout, use_bias=use_bias)
             for i in range(input_nclass)]
         if use_identity:
-            self.transformers.append(nn.Identity())
+            transformers.append(nn.Identity())
+        self.transformers = nn.ModuleList(transformers)
 
         decoder = []
         mult = 2 ** n_downsampling
