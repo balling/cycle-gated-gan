@@ -66,7 +66,7 @@ class LabelledDataset(BaseDataset):
         else:   # randomize the index for domain B to avoid fixed pairs.
             index_B = random.randint(0, self.B_size - 1)
         B_path, B_style_label = self.B_images[index_B]
-        B_content_label = self.B_labels[B_style_label].get(B_path.split('/')[-1].split('.')[0])
+        B_content_label = self.B_labels[B_style_label].get(B_path.split('/')[-1].split('.')[0], 0)
         A_img = Image.open(A_path).convert('RGB')
         B_img = Image.open(B_path).convert('RGB')
         # apply image transformation
