@@ -58,6 +58,7 @@ class BaseOptions():
         parser.add_argument('--autoencoder_constraint', type=float, default=10, help='weight of autoencoder reconstruction loss')
         parser.add_argument('--n_style', type=int, default=1, help='# of input styles')
         parser.add_argument('--l2_loss', help='whether to use l2 loss for reconstruction loss')
+        parser.add_argument('--tv_strength', type=float, default=0, help='pealization weight of total variation loss')
         self.initialized = True
         return parser
 

@@ -52,7 +52,7 @@ class GatedGANModel(BaseModel):
         """
         BaseModel.__init__(self, opt)
         # specify the training losses you want to print out. The training/test scripts will call <BaseModel.get_current_losses>
-        self.loss_names = ['D_A', 'G', 'g', 'AC', 'rec']
+        self.loss_names = ['D_A', 'G', 'g', 'AC', 'rec', 'tv']
         # specify the images you want to save/display. The training/test scripts will call <BaseModel.get_current_visuals>
         visual_names_A = ['real_A', 'fake_B']
         visual_names_B = ['real_B']
@@ -163,8 +163,14 @@ class GatedGANModel(BaseModel):
         N, _, H, W = classification.shape
         expanded_label = self.class_label_B.unsqueeze(1).unsqueeze(2).expand(N, H, W)
         self.loss_AC = self.criterionAC(classification, expanded_label)
-
-        self.loss_G = self.loss_g + self.loss_AC * lambda_A + self.loss_rec
+        
+        # total variation loss
+        if self.opt.tv_strength > 0:
+            self.loss_tv = torch.sqrt(torch.sum((self.fake_B[:, :, :, :-1] - self.fake_B[:, :, :, 1:]) ** 2) 
+            + torch.sum((self.fake_B[:, :, :-1, :] - self.fake_B[:, :, 1:, :]) ** 2))
+        else:
+            self.loss_tv = 0
+        self.loss_G = self.loss_g + self.loss_AC * lambda_A + self.loss_rec + self.loss_tv * self.opt.tv_strength
         self.loss_G.backward()
 
     def optimize_parameters(self):
