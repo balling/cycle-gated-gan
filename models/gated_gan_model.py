@@ -54,7 +54,7 @@ class GatedGANModel(BaseModel):
         # specify the training losses you want to print out. The training/test scripts will call <BaseModel.get_current_losses>
         self.loss_names = ['D_A', 'G', 'g', 'AC', 'rec']
         # specify the images you want to save/display. The training/test scripts will call <BaseModel.get_current_visuals>
-        visual_names_A = ['real_A', 'fake_B', 'rec']
+        visual_names_A = ['real_A', 'fake_B']
         visual_names_B = ['real_B']
 
         self.visual_names = visual_names_A + visual_names_B  # combine visualizations for A and B
@@ -63,6 +63,11 @@ class GatedGANModel(BaseModel):
             self.model_names = ['G_A', 'D_A']
         else:  # during test time, only load Gs
             self.model_names = ['G_A']
+
+        if self.isTrain:
+            self.visual_names.append('rec')
+        else:
+            self.visual_names += ['fake_B%d' % i for i in range(opt.n_style)]
 
         # define networks (both Generators and discriminators)
         self.netG_A = networks.define_Gated_G(opt.input_nc, opt.n_style, opt.output_nc, opt.ngf, opt.netG, opt.norm,
@@ -109,7 +114,11 @@ class GatedGANModel(BaseModel):
         if self.isTrain:
             self.rec = self.netG_A(self.real_A, self.autoflag, True) # autoencoder
             assert self.rec.shape == self.real_A.shape
-
+        else:
+            for i in range(self.opt.n_style):
+                flag = torch.zeros(self.opt.batch_size, self.opt.n_style + 1)
+                flag[:, i] = 1
+                setattr(self, 'fake_B%d' % i, self.netG_A(self.real_A, flag))
 
     def backward_D_basic(self, netD, real, fake):
         """Calculate GAN loss for the discriminator
