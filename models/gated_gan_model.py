@@ -52,7 +52,7 @@ class GatedGANModel(BaseModel):
         """
         BaseModel.__init__(self, opt)
         # specify the training losses you want to print out. The training/test scripts will call <BaseModel.get_current_losses>
-        self.loss_names = ['D_A', 'G', 'g', 'AC']
+        self.loss_names = ['D_A', 'G', 'g', 'AC', 'rec']
         # specify the images you want to save/display. The training/test scripts will call <BaseModel.get_current_visuals>
         visual_names_A = ['real_A', 'fake_B', 'rec']
         visual_names_B = ['real_B']
@@ -107,7 +107,8 @@ class GatedGANModel(BaseModel):
         """Run forward pass; called by both functions <optimize_parameters> and <test>."""
         self.fake_B = self.netG_A(self.real_A, self.one_hot_label)  # G_A(A)
         if self.isTrain:
-            self.rec = self.netG_A(self.real_A, self.autoflag) # autoencoder
+            self.rec = self.netG_A(self.real_A, self.autoflag, True) # autoencoder
+            assert self.rec.shape == self.real_A.shape
 
 
     def backward_D_basic(self, netD, real, fake):
@@ -130,7 +131,7 @@ class GatedGANModel(BaseModel):
         prediction, classification = self.netD_A(fake)
         loss_d_fake = self.criterionGAN(prediction, False)
         loss_AC_fake = self.criterionAC(classification, expanded_label) # TODO: this was commented out in original implementation
-        loss_D = (loss_d_real + loss_AC_real + loss_d_fake + loss_AC_fake) / 2
+        loss_D = loss_d_real + loss_AC_real + loss_d_fake + loss_AC_fake
         loss_D.backward()
         return loss_D
 
@@ -145,7 +146,7 @@ class GatedGANModel(BaseModel):
         lambda_A = self.opt.lambda_A
 
         # auto-encoder loss
-        rec_loss = autoencoder_constraint * self.criterionRec(self.rec, self.real_A)
+        self.loss_rec = autoencoder_constraint * self.criterionRec(self.rec, self.real_A)
 
         # gan loss
         prediction, classification = self.netD_A(self.fake_B)
@@ -154,7 +155,7 @@ class GatedGANModel(BaseModel):
         expanded_label = self.class_label_B.unsqueeze(1).unsqueeze(2).expand(N, H, W)
         self.loss_AC = self.criterionAC(classification, expanded_label)
 
-        self.loss_G = self.loss_g + self.loss_AC * lambda_A
+        self.loss_G = self.loss_g + self.loss_AC * lambda_A + self.loss_rec
         self.loss_G.backward()
 
     def optimize_parameters(self):

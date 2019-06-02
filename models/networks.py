@@ -356,7 +356,7 @@ class GatedResnetGenerator(nn.Module):
     We adapt Torch code and idea from Justin Johnson's neural style transfer project(https://github.com/jcjohnson/fast-neural-style)
     """
 
-    def __init__(self, input_nc, input_nclass, output_nc, ngf=64, use_identity=False, norm_layer=nn.BatchNorm2d, use_dropout=False, n_blocks=6, padding_type='reflect'):
+    def __init__(self, input_nc, input_nclass, output_nc, ngf=64, use_identity=False, norm_layer=nn.BatchNorm2d, use_dropout=False, n_blocks=5, padding_type='reflect'):
         """Construct a Resnet-based generator
 
         Parameters:
@@ -415,7 +415,7 @@ class GatedResnetGenerator(nn.Module):
         self.encoder = nn.Sequential(*encoder)
         self.decoder = nn.Sequential(*decoder)
 
-    def forward(self, input, content_label):
+    def forward(self, input, content_label, auto=False):
         # input (N, C, H, W)
         # content_label (N, class)
         # return value: (N, whatever output shape)
@@ -425,6 +425,8 @@ class GatedResnetGenerator(nn.Module):
         n_style, batch_size, C, H, W = transformed.shape
         # (N, 1, class) * (N, class, D) -> (N, 1, D) -> (N, D)
         transformed = torch.matmul(content_label.float().unsqueeze(1), transformed.view(n_style, batch_size, -1).transpose(0, 1)).squeeze(1).view(-1, C, H, W)
+        if auto:
+            assert torch.equal(encoded, transformed)
         return self.decoder(transformed)
 
 class ResnetGenerator(nn.Module):
