@@ -144,7 +144,7 @@ class DoubleGatedGANModel(BaseModel):
         expanded_label = self.class_label_B.unsqueeze(1).unsqueeze(2).expand(N, H, W)
         self.loss_AC_style_real = self.criterionAC(styles, expanded_label)
         expanded_content = self.content_label_B.unsqueeze(1).unsqueeze(2).expand(N, H, W)
-        self.loss_AC_content_real = self.criterionAC(styles, expanded_content)
+        self.loss_AC_content_real = self.criterionAC(contents, expanded_content)
 
         prediction, styles, contents = self.netD_A(fake)
         self.loss_d_fake = self.criterionGAN(prediction, False)
