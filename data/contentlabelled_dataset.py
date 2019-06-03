@@ -13,7 +13,7 @@ def read_content_csv(file_path):
         csv_reader = csv.reader(file, delimiter=',')
         next(csv_reader)
         for row in csv_reader:
-            labels[row[0]] = int(row[1])-1  # category by filename
+            labels[row[0].split('.')[0]] = int(row[1])-1  # category by filename
     return labels
 
 

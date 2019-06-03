@@ -380,8 +380,8 @@ class GatedResnetGenerator(nn.Module):
                  norm_layer(ngf),
                  nn.ReLU(True)]
 
-        self.n_style = input_nclass
-        self.n_content = n_content
+        self.n_style = input_nclass + (1 if use_identity else 0)
+        self.n_content = n_content + (1 if use_identity else 0)
 
         n_downsampling = 2
         for i in range(n_downsampling):  # add downsampling layers
@@ -431,8 +431,8 @@ class GatedResnetGenerator(nn.Module):
         # style_label (N, class)
         # return value: (N, whatever output shape)
         """Standard forward"""
-        batch_size, C, H, W = input.shape
         encoded = self.encoder(input)
+        batch_size, C, H, W = encoded.shape
         if self.n_content:
             content_transformed = torch.stack([trans(encoded) for trans in self.content_transformers])
             content_transformed = torch.matmul(content_label.float().unsqueeze(1), content_transformed.view(self.n_content, batch_size, -1).transpose(0, 1)).squeeze(1).view(-1, C, H, W)
