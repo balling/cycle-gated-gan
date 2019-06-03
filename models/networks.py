@@ -159,7 +159,7 @@ def define_G(input_nc, output_nc, ngf, netG, norm='batch', use_dropout=False, in
     return init_net(net, init_type, init_gain, gpu_ids)
 
 
-def define_Gated_G(input_nc, input_nclass, output_nc, ngf, netG, norm='batch', use_dropout=False, init_type='normal', init_gain=0.02, gpu_ids=[]):
+def define_Gated_G(input_nc, input_nclass, output_nc, ngf, netG, norm='batch', use_dropout=False, init_type='normal', init_gain=0.02, gpu_ids=[], n_content=None):
     """Create a generator
 
     Parameters:
@@ -189,15 +189,15 @@ def define_Gated_G(input_nc, input_nclass, output_nc, ngf, netG, norm='batch', u
     net = None
     norm_layer = get_norm_layer(norm_type=norm)
     if netG == 'gated_resnet_6blocks':
-        net = GatedResnetGenerator(input_nc, input_nclass, output_nc, ngf, False)
+        net = GatedResnetGenerator(input_nc, input_nclass, n_content, output_nc, ngf, False)
     elif netG == 'auto_gated_resnet_6blocks':
-        net = GatedResnetGenerator(input_nc, input_nclass, output_nc, ngf, True)
+        net = GatedResnetGenerator(input_nc, input_nclass, n_content, output_nc, ngf, True)
     else:
         raise NotImplementedError('Generator model name [%s] is not recognized' % netG)
     return init_net(net, init_type, init_gain, gpu_ids)
 
 
-def define_D(input_nc, ndf, netD, n_layers_D=3, norm='batch', init_type='normal', init_gain=0.02, gpu_ids=[], input_nclass=None):
+def define_D(input_nc, ndf, netD, n_layers_D=3, norm='batch', init_type='normal', init_gain=0.02, gpu_ids=[], input_nclass=None, input_ncontent=None):
     """Create a discriminator
 
     Parameters:
@@ -231,9 +231,9 @@ def define_D(input_nc, ndf, netD, n_layers_D=3, norm='batch', init_type='normal'
     norm_layer = get_norm_layer(norm_type=norm)
 
     if netD == 'basic':  # default PatchGAN classifier
-        net = NLayerDiscriminator(input_nc, ndf, n_layers=3, norm_layer=norm_layer, input_nclass=input_nclass)
+        net = NLayerDiscriminator(input_nc, ndf, n_layers=3, norm_layer=norm_layer, input_nclass=input_nclass, input_ncontent=input_ncontent)
     elif netD == 'n_layers':  # more options
-        net = NLayerDiscriminator(input_nc, ndf, n_layers_D, norm_layer=norm_layer, input_nclass=input_nclass)
+        net = NLayerDiscriminator(input_nc, ndf, n_layers_D, norm_layer=norm_layer, input_nclass=input_nclass, input_ncontent=input_ncontent)
     elif netD == 'pixel':     # classify if each pixel is real or fake
         net = PixelDiscriminator(input_nc, ndf, norm_layer=norm_layer)
     else:
@@ -356,7 +356,7 @@ class GatedResnetGenerator(nn.Module):
     We adapt Torch code and idea from Justin Johnson's neural style transfer project(https://github.com/jcjohnson/fast-neural-style)
     """
 
-    def __init__(self, input_nc, input_nclass, output_nc, ngf=64, use_identity=False, norm_layer=nn.BatchNorm2d, use_dropout=False, n_blocks=5, padding_type='reflect'):
+    def __init__(self, input_nc, input_nclass, n_content, output_nc, ngf=64, use_identity=False, norm_layer=nn.BatchNorm2d, use_dropout=False, n_blocks=5, padding_type='reflect'):
         """Construct a Resnet-based generator
 
         Parameters:
@@ -380,6 +380,9 @@ class GatedResnetGenerator(nn.Module):
                  norm_layer(ngf),
                  nn.ReLU(True)]
 
+        self.n_style = input_nclass
+        self.n_content = n_content
+
         n_downsampling = 2
         for i in range(n_downsampling):  # add downsampling layers
             mult = 2 ** i
@@ -387,6 +390,14 @@ class GatedResnetGenerator(nn.Module):
                       norm_layer(ngf * mult * 2),
                       nn.ReLU(True)]
 
+        if n_content:
+            n_blocks -= 1
+            content_transformers = [ResnetBlock(ngf * mult * 2, padding_type=padding_type, norm_layer=norm_layer, use_dropout=use_dropout, use_bias=use_bias)
+                for i in range(n_content)]
+            if use_identity:
+                content_transformers.append(nn.Identity())
+            self.content_transformers = nn.ModuleList(content_transformers)
+        
         # add transformer
         transformers = [ResnetBlock(ngf * mult * 2, padding_type=padding_type, norm_layer=norm_layer, use_dropout=use_dropout, use_bias=use_bias)
             for i in range(input_nclass)]
@@ -415,16 +426,23 @@ class GatedResnetGenerator(nn.Module):
         self.encoder = nn.Sequential(*encoder)
         self.decoder = nn.Sequential(*decoder)
 
-    def forward(self, input, content_label, auto=False):
+    def forward(self, input, style_label, auto=False, content_label=None):
         # input (N, C, H, W)
-        # content_label (N, class)
+        # style_label (N, class)
         # return value: (N, whatever output shape)
         """Standard forward"""
+        batch_size, C, H, W = input.shape
         encoded = self.encoder(input)
-        transformed = torch.stack([trans(encoded) for trans in self.transformers]) # (class, N, D)
-        n_style, batch_size, C, H, W = transformed.shape
+        if self.n_content:
+            content_transformed = torch.stack([trans(encoded) for trans in self.content_transformers])
+            content_transformed = torch.matmul(content_label.float().unsqueeze(1), content_transformed.view(self.n_content, batch_size, -1).transpose(0, 1)).squeeze(1).view(-1, C, H, W)
+            if auto:
+                assert torch.equal(encoded, content_transformed)
+        else:
+            content_transformed = encoded
+        transformed = torch.stack([trans(content_transformed) for trans in self.transformers]) # (class, N, D)
         # (N, 1, class) * (N, class, D) -> (N, 1, D) -> (N, D)
-        transformed = torch.matmul(content_label.float().unsqueeze(1), transformed.view(n_style, batch_size, -1).transpose(0, 1)).squeeze(1).view(-1, C, H, W)
+        transformed = torch.matmul(style_label.float().unsqueeze(1), transformed.view(self.n_style, batch_size, -1).transpose(0, 1)).squeeze(1).view(-1, C, H, W)
         if auto:
             assert torch.equal(encoded, transformed)
         return self.decoder(transformed)
@@ -655,7 +673,7 @@ class UnetSkipConnectionBlock(nn.Module):
 class NLayerDiscriminator(nn.Module):
     """Defines a PatchGAN discriminator"""
 
-    def __init__(self, input_nc, ndf=64, n_layers=3, norm_layer=nn.BatchNorm2d, input_nclass=None):
+    def __init__(self, input_nc, ndf=64, n_layers=3, norm_layer=nn.BatchNorm2d, input_nclass=None, input_ncontent=None):
         """Construct a PatchGAN discriminator
 
         Parameters:
@@ -692,15 +710,20 @@ class NLayerDiscriminator(nn.Module):
             nn.LeakyReLU(0.2, True)
         ]
         self.nclass= input_nclass
+        self.ncontent = input_ncontent
         self.model = nn.Sequential(*sequence)
         self.prediction = nn.Conv2d(ndf * nf_mult, 1, kernel_size=kw, stride=1, padding=padw) # output 1 channel prediction map
         if input_nclass:
             self.classifier = nn.Conv2d(ndf * nf_mult, input_nclass, kernel_size=kw, stride=1, padding=padw) # output n class channel prediction map
+        if input_ncontent:
+            self.content_classifier = nn.Conv2d(ndf * nf_mult, input_ncontent, kernel_size=kw, stride=1, padding=padw) # output n content class channel prediction map
 
     def forward(self, input):
         """Standard forward."""
         final_layer = self.model(input)
-        if self.nclass:
+        if self.nclass and self.ncontent:
+            return self.prediction(final_layer), self.classifier(final_layer), self.content_classifier(final_layer)
+        elif self.nclass:
             return self.prediction(final_layer), self.classifier(final_layer)
         else:
             return self.prediction(final_layer)
