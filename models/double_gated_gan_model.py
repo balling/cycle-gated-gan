@@ -65,7 +65,7 @@ class DoubleGatedGANModel(BaseModel):
             self.model_names = ['G_A']
 
         if self.isTrain:
-            self.visual_names += ['rec', 'content_only']
+            self.visual_names += ['rec', 'content_only', 'style_only']
         else:
             self.visual_names += ['fake_B%d' % i for i in range(opt.n_style)]
 
@@ -119,8 +119,10 @@ class DoubleGatedGANModel(BaseModel):
         if self.isTrain:
             self.rec = self.netG_A(self.real_A, self.style_autoflag, True, self.content_autoflag) # autoencoder
             self.content_only = self.netG_A(self.real_A, self.style_autoflag, content_label=self.one_hot_content) # no style transformation
+            self.style_only = self.netG_A(self.real_A, self.one_hot_label, content_label=self.content_autoflag) # no content transformation
             assert self.rec.shape == self.real_A.shape
             assert self.content_only.shape == self.real_A.shape
+            assert self.style_only.shape == self.real_A.shape
         else:
             for i in range(self.opt.n_style):
                 flag = torch.zeros(self.opt.batch_size, self.opt.n_style + 1)
@@ -167,7 +169,8 @@ class DoubleGatedGANModel(BaseModel):
         self.loss_rec = autoencoder_constraint * self.criterionRec(self.rec, self.real_A)
 
         # gan loss
-        prediction, styles, _ = self.netD_A(self.fake_B)
+        prediction, _, _ = self.netD_A(self.fake_B)
+        _, styles, _ = self.netD_A(self.style_only)
         _, _, contents = self.netD_A(self.content_only)
         self.loss_g = self.criterionGAN(prediction, True)
         N, _, H, W = styles.shape
