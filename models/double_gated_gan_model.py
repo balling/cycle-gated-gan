@@ -52,7 +52,7 @@ class DoubleGatedGANModel(BaseModel):
         """
         BaseModel.__init__(self, opt)
         # specify the training losses you want to print out. The training/test scripts will call <BaseModel.get_current_losses>
-        self.loss_names = ['D_A', 'G', 'g', 'style', 'content', 'rec', 'tv', 'd_real', 'AC_style_real', 'AC_content_real', 'd_fake', 'AC_fake']
+        self.loss_names = ['D_A', 'G', 'g', 'style', 'content', 'rec', 'tv', 'd_real', 'AC_style_real', 'AC_content_real', 'd_fake', 'AC_fake', 'AC_content_fake']
         # specify the images you want to save/display. The training/test scripts will call <BaseModel.get_current_visuals>
         visual_names_A = ['real_A', 'fake_B']
         visual_names_B = ['real_B']
@@ -65,7 +65,8 @@ class DoubleGatedGANModel(BaseModel):
             self.model_names = ['G_A']
 
         if self.isTrain:
-            self.visual_names += ['rec', 'content_only', 'style_only']
+            self.visual_names += ['rec']
+            # self.visual_names += ['rec', 'content_only', 'style_only']
         else:
             self.visual_names += ['fake_B%d' % i for i in range(opt.n_style)]
 
@@ -118,11 +119,11 @@ class DoubleGatedGANModel(BaseModel):
         self.fake_B = self.netG_A(self.real_A, self.one_hot_label, content_label=self.one_hot_content)  # G_A(A)
         if self.isTrain:
             self.rec = self.netG_A(self.real_A, self.style_autoflag, True, self.content_autoflag) # autoencoder
-            self.content_only = self.netG_A(self.real_A, self.style_autoflag, content_label=self.one_hot_content) # no style transformation
-            self.style_only = self.netG_A(self.real_A, self.one_hot_label, content_label=self.content_autoflag) # no content transformation
+            # self.content_only = self.netG_A(self.real_A, self.style_autoflag, content_label=self.one_hot_content) # no style transformation
+            # self.style_only = self.netG_A(self.real_A, self.one_hot_label, content_label=self.content_autoflag) # no content transformation
             assert self.rec.shape == self.real_A.shape
-            assert self.content_only.shape == self.real_A.shape
-            assert self.style_only.shape == self.real_A.shape
+            # assert self.content_only.shape == self.real_A.shape
+            # assert self.style_only.shape == self.real_A.shape
         else:
             for i in range(self.opt.n_style):
                 flag = torch.zeros(self.opt.batch_size, self.opt.n_style + 1)
@@ -140,6 +141,7 @@ class DoubleGatedGANModel(BaseModel):
         Return the discriminator loss.
         We also call loss_D.backward() to calculate the gradients.
         """
+        lambda_A = self.opt.lambda_A
         prediction, styles, contents = self.netD_A(real)
         self.loss_d_real = self.criterionGAN(prediction, True)
         N, _, H, W = styles.shape
@@ -151,7 +153,9 @@ class DoubleGatedGANModel(BaseModel):
         prediction, styles, contents = self.netD_A(fake)
         self.loss_d_fake = self.criterionGAN(prediction, False)
         self.loss_AC_fake = self.criterionAC(styles, expanded_label) # TODO: this was commented out in original implementation
-        loss_D = self.loss_d_real + self.loss_AC_style_real + self.loss_AC_content_real + self.loss_d_fake + self.loss_AC_fake
+        self.loss_AC_content_fake = self.criterionAC(contents, expanded_content)
+        loss_D = self.loss_d_real + self.loss_d_fake \
+            + lambda_A* (self.loss_AC_style_real + self.loss_AC_content_real + self.loss_AC_fake + self.loss_AC_content_fake)
         loss_D.backward()
         return loss_D
 
@@ -169,9 +173,10 @@ class DoubleGatedGANModel(BaseModel):
         self.loss_rec = autoencoder_constraint * self.criterionRec(self.rec, self.real_A)
 
         # gan loss
-        prediction, _, _ = self.netD_A(self.fake_B)
-        _, styles, _ = self.netD_A(self.style_only)
-        _, _, contents = self.netD_A(self.content_only)
+        prediction, styles, contents = self.netD_A(self.fake_B)
+        # prediction, _, _ = self.netD_A(self.fake_B)
+        # _, styles, _ = self.netD_A(self.style_only)
+        # _, _, contents = self.netD_A(self.content_only)
         self.loss_g = self.criterionGAN(prediction, True)
         N, _, H, W = styles.shape
         expanded_label = self.class_label_B.unsqueeze(1).unsqueeze(2).expand(N, H, W)
