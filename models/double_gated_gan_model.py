@@ -3,7 +3,64 @@ import itertools
 from util.image_pool import ImagePool
 from .base_model import BaseModel
 from . import networks
+from scipy import ndimage as ndi
+import numpy as np
 
+# TODO: move these to seperate files
+# Code based from https://github.com/heitorrapela/xdog/blob/master/main.py with modifications
+def dog(blur1, blur2, imgs, gamma=1):
+    return blur1(imgs) - gamma * blur2(imgs)
+
+# Code based from https://github.com/heitorrapela/xdog/blob/master/main.py with modifications
+def xdog(blur1, blur2, imgs, gamma=1, epsilon=-1, phi=1):
+    aux = dog(blur1, blur2, imgs, gamma)
+    mask = aux < epsilon
+    aux = torch.tanh(phi * (aux - epsilon)) + 1
+    aux[mask] = 1
+    return aux
+
+# based on https://github.com/scikit-image/scikit-image/blob/master/skimage/morphology/misc.py#L51
+def remove_small_objects(ar, min_size=64, connectivity=1, in_place=False):
+    out = ar.numpy()
+    selem = ndi.generate_binary_structure(out.ndim, connectivity)
+    ccs = np.zeros_like(out, dtype=np.int32)
+    ndi.label(out, selem, output=ccs)
+    component_sizes = np.bincount(ccs.ravel())
+    too_small = component_sizes >= min_size
+    too_small_mask = torch.Tensor(too_small[ccs]).byte()
+    return (ar * too_small_mask).float()
+
+# Methodology: 
+# Neural Abstract Style Transfer for Chinese Traditional Painting
+# https://arxiv.org/pdf/1812.03264.pdf
+def mxdog(blur1, blur2, imgs, thres, gamma=1, epsilon=-1, phi=1):
+    aux = xdog(blur1, blur2, imgs, gamma, epsilon, phi)
+    mu = aux.mean((2, 3), True).expand_as(aux)
+    aux = aux > mu
+    return remove_small_objects(aux, min_size=thres)
+
+def mxdog_loss(blur1, blur2, content_img, output_img, style_img, thres=64):
+    N, C, H, W = output_img.shape
+    
+    def gram_matrix(matrix):
+        tmp = matrix.view(-1, H, W)
+        return torch.bmm(tmp, tmp.transpose(1,2)).view(N, C, H, H)
+    
+    I_md = mxdog(blur1, blur2, output_img, thres)
+    I_c_md = mxdog(blur1, blur2, content_img, thres)
+    I_s_md = mxdog(blur1, blur2, style_img, thres)
+    
+    content_loss = ((output_img - I_c_md)**2).sqrt().mean()
+    
+    content_gram = gram_matrix(I_c_md)
+    output_gram = gram_matrix(I_md)
+    style_gram = gram_matrix(I_s_md)
+    
+    content_constraint_loss = ((output_gram - content_gram)**2).sqrt().mean()
+    style_constraint_loss = ((output_gram - style_gram)**2).sqrt().mean()
+
+    loss = content_loss + content_constraint_loss + style_constraint_loss
+    return loss
 
 class DoubleGatedGANModel(BaseModel):
     """
@@ -52,7 +109,7 @@ class DoubleGatedGANModel(BaseModel):
         """
         BaseModel.__init__(self, opt)
         # specify the training losses you want to print out. The training/test scripts will call <BaseModel.get_current_losses>
-        self.loss_names = ['D_A', 'G', 'g', 'style', 'content', 'rec', 'tv', 'd_real', 'AC_style_real', 'AC_content_real', 'd_fake', 'AC_fake', 'AC_content_fake']
+        self.loss_names = ['D_A', 'G', 'g', 'style', 'content', 'rec', 'tv', 'd_real', 'AC_style_real', 'AC_content_real', 'd_fake', 'AC_fake', 'AC_content_fake', 'mxdog']
         # specify the images you want to save/display. The training/test scripts will call <BaseModel.get_current_visuals>
         visual_names_A = ['real_A', 'fake_B']
         visual_names_B = ['real_B']
@@ -94,6 +151,11 @@ class DoubleGatedGANModel(BaseModel):
             self.optimizer_D = torch.optim.Adam(self.netD_A.parameters(), lr=opt.lr, betas=(opt.beta1, 0.999))
             self.optimizers.append(self.optimizer_G)
             self.optimizers.append(self.optimizer_D)
+            sigma = 0.5 #todo move to option
+            k = 1.6
+            kernal_size = 3
+            self.blur1 = networks.GaussianSmoothing(opt.input_nc, kernal_size, sigma)
+            self.blur2 = networks.GaussianSmoothing(opt.input_nc, kernal_size, sigma * k)
 
     def set_input(self, input):
         """Unpack input data from the dataloader and perform necessary pre-processing steps.
@@ -190,7 +252,9 @@ class DoubleGatedGANModel(BaseModel):
             + torch.mean((self.fake_B[:, :, :-1, :] - self.fake_B[:, :, 1:, :]) ** 2))
         else:
             self.loss_tv = 0
-        self.loss_G = self.loss_g + (self.loss_style + self.loss_content) * lambda_A + self.loss_rec + self.loss_tv * self.opt.tv_strength
+        
+        self.loss_mxdog = mxdog_loss(self.blur1, self.blur2, real_A, fake_B, real_B)
+        self.loss_G = self.loss_g + (self.loss_style + self.loss_content) * lambda_A + self.loss_rec + self.loss_tv * self.opt.tv_strength + self.lambda_B * self.loss_mxdog
         self.loss_G.backward()
 
     def optimize_parameters(self):
