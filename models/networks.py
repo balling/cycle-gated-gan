@@ -381,7 +381,7 @@ class GatedResnetGenerator(nn.Module):
                  nn.ReLU(True)]
 
         self.n_style = input_nclass + (1 if use_identity else 0)
-        self.n_content = n_content + (1 if use_identity else 0)
+        self.n_content = n_content
 
         n_downsampling = 2
         for i in range(n_downsampling):  # add downsampling layers
@@ -391,6 +391,8 @@ class GatedResnetGenerator(nn.Module):
                       nn.ReLU(True)]
 
         if n_content:
+            if use_identity:
+                self.n_content += 1
             n_blocks -= 1
             content_transformers = [ResnetBlock(ngf * mult * 2, padding_type=padding_type, norm_layer=norm_layer, use_dropout=use_dropout, use_bias=use_bias)
                 for i in range(n_content)]
