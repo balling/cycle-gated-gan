@@ -58,7 +58,7 @@ def mxdog_loss(device, blur1, blur2, content_img, output_img, style_img, thres=6
     content_constraint_loss = ((output_gram - content_gram)**2).sqrt().mean()
     style_constraint_loss = ((output_gram - style_gram)**2).sqrt().mean()
 
-    loss = content_loss + content_constraint_loss + style_constraint_loss
+    loss = 0.01 * content_loss + content_constraint_loss + style_constraint_loss
     return loss
 
 class DoubleGatedGANModel(BaseModel):
@@ -94,8 +94,8 @@ class DoubleGatedGANModel(BaseModel):
         """
         parser.set_defaults(no_dropout=True)  # default CycleGAN did not use dropout
         if is_train:
-            parser.add_argument('--lambda_A', type=float, default=10.0, help='weight for cycle loss (A -> B -> A)')
-            parser.add_argument('--lambda_B', type=float, default=10.0, help='weight for cycle loss (B -> A -> B)')
+            parser.add_argument('--lambda_A', type=float, default=1.0, help='weight for auxilary loss')
+            parser.add_argument('--lambda_B', type=float, default=10.0, help='weight for mxdog loss')
             parser.add_argument('--lambda_identity', type=float, default=0.5, help='use identity mapping. Setting lambda_identity other than 0 has an effect of scaling the weight of the identity mapping loss. For example, if the weight of the identity loss should be 10 times smaller than the weight of the reconstruction loss, please set lambda_identity = 0.1')
 
         return parser
@@ -153,8 +153,8 @@ class DoubleGatedGANModel(BaseModel):
             sigma = 0.5 #todo move to option
             k = 1.6
             kernal_size = 3
-            self.blur1 = networks.define_smoothing(opt.input_nc, kernal_size, sigma, self.gpu_ids)
-            self.blur2 = networks.define_smoothing(opt.input_nc, kernal_size, sigma * k, self.gpu_ids)
+            self.blur1 = networks.GaussianSmoothing(opt.input_nc, kernal_size, sigma).to(self.device)
+            self.blur2 = networks.GaussianSmoothing(opt.input_nc, kernal_size, sigma * k).to(self.device)
 
     def set_input(self, input):
         """Unpack input data from the dataloader and perform necessary pre-processing steps.
