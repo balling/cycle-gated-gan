@@ -20,35 +20,34 @@ def xdog(blur1, blur2, imgs, gamma=1, epsilon=-1, phi=1):
     return aux
 
 # based on https://github.com/scikit-image/scikit-image/blob/master/skimage/morphology/misc.py#L51
-def remove_small_objects(ar, min_size=64, connectivity=1, in_place=False):
-    out = ar.numpy()
+def remove_small_objects(out, min_size=64, connectivity=1, in_place=False):
     selem = ndi.generate_binary_structure(out.ndim, connectivity)
     ccs = np.zeros_like(out, dtype=np.int32)
     ndi.label(out, selem, output=ccs)
     component_sizes = np.bincount(ccs.ravel())
     too_small = component_sizes >= min_size
-    too_small_mask = torch.Tensor(too_small[ccs]).byte()
-    return (ar * too_small_mask).float()
+    return torch.Tensor(too_small[ccs]).byte()
 
 # Methodology: 
 # Neural Abstract Style Transfer for Chinese Traditional Painting
 # https://arxiv.org/pdf/1812.03264.pdf
-def mxdog(blur1, blur2, imgs, thres, gamma=1, epsilon=-1, phi=1):
+def mxdog(device, blur1, blur2, imgs, thres, gamma=1, epsilon=-1, phi=1):
     aux = xdog(blur1, blur2, imgs, gamma, epsilon, phi)
     mu = aux.mean((2, 3), True).expand_as(aux)
     aux = aux > mu
-    return remove_small_objects(aux, min_size=thres)
+    mask = remove_small_objects(aux.to('cpu').numpy(), min_size=thres)
+    return (aux * mask.to(device)).float()
 
-def mxdog_loss(blur1, blur2, content_img, output_img, style_img, thres=64):
+def mxdog_loss(device, blur1, blur2, content_img, output_img, style_img, thres=64):
     N, C, H, W = output_img.shape
     
     def gram_matrix(matrix):
         tmp = matrix.view(-1, H, W)
         return torch.bmm(tmp, tmp.transpose(1,2)).view(N, C, H, H)
     
-    I_md = mxdog(blur1, blur2, output_img, thres)
-    I_c_md = mxdog(blur1, blur2, content_img, thres)
-    I_s_md = mxdog(blur1, blur2, style_img, thres)
+    I_md = mxdog(device, blur1, blur2, output_img, thres)
+    I_c_md = mxdog(device, blur1, blur2, content_img, thres)
+    I_s_md = mxdog(device, blur1, blur2, style_img, thres)
     
     content_loss = ((output_img - I_c_md)**2).sqrt().mean()
     
@@ -178,7 +177,7 @@ class DoubleGatedGANModel(BaseModel):
 
     def forward(self):
         """Run forward pass; called by both functions <optimize_parameters> and <test>."""
-        self.fake_B = self.netG_A(self.real_A, self.one_hot_label, content_label=self.one_hot_content)  # G_A(A)
+        self.fake_B = self.netG_A(self.real_A, self.one_hot_label, content_label=self.one_hot_content).to(self.device)  # G_A(A)
         if self.isTrain:
             self.rec = self.netG_A(self.real_A, self.style_autoflag, True, self.content_autoflag) # autoencoder
             # self.content_only = self.netG_A(self.real_A, self.style_autoflag, content_label=self.one_hot_content) # no style transformation
@@ -253,7 +252,7 @@ class DoubleGatedGANModel(BaseModel):
         else:
             self.loss_tv = 0
         
-        self.loss_mxdog = mxdog_loss(self.blur1, self.blur2, self.real_A, self.fake_B, self.real_B)
+        self.loss_mxdog = mxdog_loss(self.device, self.blur1, self.blur2, self.real_A, self.fake_B, self.real_B)
         self.loss_G = self.loss_g + (self.loss_style + self.loss_content) * lambda_A + self.loss_rec + self.loss_tv * self.opt.tv_strength + self.lambda_B * self.loss_mxdog
         self.loss_G.backward()
 
