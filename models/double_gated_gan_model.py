@@ -49,14 +49,14 @@ def mxdog_loss(device, blur1, blur2, content_img, output_img, style_img, thres=6
     I_c_md = mxdog(device, blur1, blur2, content_img, thres)
     I_s_md = mxdog(device, blur1, blur2, style_img, thres)
     
-    content_loss = ((output_img - I_c_md)**2).sqrt().mean()
+    content_loss = (output_img - I_c_md).norm() / output_img.numel()
     
     content_gram = gram_matrix(I_c_md)
     output_gram = gram_matrix(I_md)
     style_gram = gram_matrix(I_s_md)
     
-    content_constraint_loss = ((output_gram - content_gram)**2).sqrt().mean()
-    style_constraint_loss = ((output_gram - style_gram)**2).sqrt().mean()
+    content_constraint_loss = (output_gram - content_gram).norm() / output_gram.numel()
+    style_constraint_loss = (output_gram - style_gram).norm() / output_gram.numel()
 
     loss = 0.01 * content_loss + content_constraint_loss + style_constraint_loss
     return loss
