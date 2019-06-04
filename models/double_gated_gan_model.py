@@ -153,8 +153,8 @@ class DoubleGatedGANModel(BaseModel):
             sigma = 0.5 #todo move to option
             k = 1.6
             kernal_size = 3
-            self.blur1 = networks.define_smoothing(opt.input_nc, kernal_size, sigma)
-            self.blur2 = networks.define_smoothing(opt.input_nc, kernal_size, sigma * k)
+            self.blur1 = networks.define_smoothing(opt.input_nc, kernal_size, sigma, self.gpu_ids)
+            self.blur2 = networks.define_smoothing(opt.input_nc, kernal_size, sigma * k, self.gpu_ids)
 
     def set_input(self, input):
         """Unpack input data from the dataloader and perform necessary pre-processing steps.

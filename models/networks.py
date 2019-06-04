@@ -765,8 +765,8 @@ class PixelDiscriminator(nn.Module):
         """Standard forward."""
         return self.net(input)
 
-def define_smoothing(channels, kernal_size, sigma):
-    return init_net(GaussianSmoothing(channels, kernal_size, sigma))
+def define_smoothing(channels, kernal_size, sigma, gpu_ids):
+    return init_net(GaussianSmoothing(channels, kernal_size, sigma), gpu_ids=gpu_ids)
 
 #https://discuss.pytorch.org/t/is-there-anyway-to-do-gaussian-filtering-for-an-image-2d-3d-in-pytorch/12351/10
 class GaussianSmoothing(nn.Module):
