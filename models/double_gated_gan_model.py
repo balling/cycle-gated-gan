@@ -253,7 +253,7 @@ class DoubleGatedGANModel(BaseModel):
         else:
             self.loss_tv = 0
         
-        self.loss_mxdog = mxdog_loss(self.blur1, self.blur2, real_A, fake_B, real_B)
+        self.loss_mxdog = mxdog_loss(self.blur1, self.blur2, self.real_A, self.fake_B, self.real_B)
         self.loss_G = self.loss_g + (self.loss_style + self.loss_content) * lambda_A + self.loss_rec + self.loss_tv * self.opt.tv_strength + self.lambda_B * self.loss_mxdog
         self.loss_G.backward()
 
