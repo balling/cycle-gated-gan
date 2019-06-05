@@ -207,16 +207,16 @@ class DoubleGatedGANModel(BaseModel):
         self.loss_d_real = self.criterionGAN(prediction, True)
         N, _, H, W = styles.shape
         expanded_label = self.class_label_B.unsqueeze(1).unsqueeze(2).expand(N, H, W)
-        self.loss_AC_style_real = self.criterionAC(styles, expanded_label)
+        self.loss_AC_style_real = lambda_A * self.criterionAC(styles, expanded_label)
         expanded_content = self.content_label_B.unsqueeze(1).unsqueeze(2).expand(N, H, W)
-        self.loss_AC_content_real = self.criterionAC(contents, expanded_content)
+        self.loss_AC_content_real = lambda_A * self.criterionAC(contents, expanded_content)
 
         prediction, styles, contents = self.netD_A(fake)
         self.loss_d_fake = self.criterionGAN(prediction, False)
-        self.loss_AC_fake = self.criterionAC(styles, expanded_label) # TODO: this was commented out in original implementation
-        self.loss_AC_content_fake = self.criterionAC(contents, expanded_content)
+        self.loss_AC_fake = lambda_A * self.criterionAC(styles, expanded_label) # TODO: this was commented out in original implementation
+        self.loss_AC_content_fake = lambda_A * self.criterionAC(contents, expanded_content)
         loss_D = self.loss_d_real + self.loss_d_fake \
-            + lambda_A* (self.loss_AC_style_real + self.loss_AC_content_real + self.loss_AC_fake + self.loss_AC_content_fake)
+            + (self.loss_AC_style_real + self.loss_AC_content_real + self.loss_AC_fake + self.loss_AC_content_fake)
         loss_D.backward()
         return loss_D
 
@@ -243,8 +243,8 @@ class DoubleGatedGANModel(BaseModel):
         N, _, H, W = styles.shape
         expanded_label = self.class_label_B.unsqueeze(1).unsqueeze(2).expand(N, H, W)
         self.loss_style = self.criterionAC(styles, expanded_label)
-        expanded_content = self.content_label_B.unsqueeze(1).unsqueeze(2).expand(N, H, W)
-        self.loss_content = self.criterionAC(contents, expanded_content)
+        expanded_content = lambda_A * self.content_label_B.unsqueeze(1).unsqueeze(2).expand(N, H, W)
+        self.loss_content = lambda_A * self.criterionAC(contents, expanded_content)
         
         # total variation loss
         if self.opt.tv_strength > 0:
@@ -252,9 +252,10 @@ class DoubleGatedGANModel(BaseModel):
             + torch.mean((self.fake_B[:, :, :-1, :] - self.fake_B[:, :, 1:, :]) ** 2))
         else:
             self.loss_tv = 0
+        self.loss_tv *= self.opt.tv_strength
         
-        self.loss_mxdog = mxdog_loss(self.device, self.blur1, self.blur2, self.real_A, self.fake_B, self.real_B)
-        self.loss_G = self.loss_g + (self.loss_style + self.loss_content) * lambda_A + self.loss_rec + self.loss_tv * self.opt.tv_strength + lambda_B * self.loss_mxdog
+        self.loss_mxdog = lambda_B * mxdog_loss(self.device, self.blur1, self.blur2, self.real_A, self.fake_B, self.real_B)
+        self.loss_G = self.loss_g + (self.loss_style + self.loss_content) + self.loss_rec + self.loss_tv + self.loss_mxdog
         self.loss_G.backward()
 
     def optimize_parameters(self):
