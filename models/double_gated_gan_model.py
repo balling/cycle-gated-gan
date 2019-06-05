@@ -248,12 +248,10 @@ class DoubleGatedGANModel(BaseModel):
         
         # total variation loss
         if self.opt.tv_strength > 0:
-            self.loss_tv = torch.sqrt(torch.mean((self.fake_B[:, :, :, :-1] - self.fake_B[:, :, :, 1:]) ** 2) 
+            self.loss_tv = self.opt.tv_strength * torch.sqrt(torch.mean((self.fake_B[:, :, :, :-1] - self.fake_B[:, :, :, 1:]) ** 2) 
             + torch.mean((self.fake_B[:, :, :-1, :] - self.fake_B[:, :, 1:, :]) ** 2))
         else:
             self.loss_tv = 0
-        self.loss_tv *= self.opt.tv_strength
-        
         self.loss_mxdog = lambda_B * mxdog_loss(self.device, self.blur1, self.blur2, self.real_A, self.fake_B, self.real_B)
         self.loss_G = self.loss_g + (self.loss_style + self.loss_content) + self.loss_rec + self.loss_tv + self.loss_mxdog
         self.loss_G.backward()
