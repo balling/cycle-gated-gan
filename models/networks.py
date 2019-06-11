@@ -404,18 +404,17 @@ class GatedResnetGenerator(nn.Module):
             self.content_transformers = nn.ModuleList(content_transformers)
         
         # add transformer
-        transformers = [ResnetBlock(ngf * mult * 2, padding_type=padding_type, norm_layer=norm_layer, use_dropout=use_dropout, use_bias=use_bias)
+        style_transformers = [ResnetBlock(ngf * mult * 2, padding_type=padding_type, norm_layer=norm_layer, use_dropout=use_dropout, use_bias=use_bias)
             for i in range(input_nclass)]
         if use_identity:
-            transformers.append(nn.Identity())
-        self.transformers = nn.ModuleList(transformers)
+            style_transformers.append(nn.Identity())
+        self.transformers = nn.ModuleList(style_transformers)
 
         decoder = []
         mult = 2 ** n_downsampling
         for i in range(n_blocks):       # add ResNet blocks
-
             decoder += [ResnetBlock(ngf * mult, padding_type=padding_type, norm_layer=norm_layer, use_dropout=use_dropout, use_bias=use_bias)]
-
+        
         for i in range(n_downsampling):  # add upsampling layers
             mult = 2 ** (n_downsampling - i)
             decoder += [nn.ConvTranspose2d(ngf * mult, int(ngf * mult / 2),
@@ -438,18 +437,14 @@ class GatedResnetGenerator(nn.Module):
         """Standard forward"""
         encoded = self.encoder(input)
         batch_size, C, H, W = encoded.shape
+        transformed = encoded
         if self.n_content:
-            content_transformed = torch.stack([trans(encoded) for trans in self.content_transformers])
-            content_transformed = torch.matmul(content_label.float().unsqueeze(1), content_transformed.view(self.n_content, batch_size, -1).transpose(0, 1)).squeeze(1).view(-1, C, H, W)
-            if auto:
-                assert torch.equal(encoded, content_transformed)
-        else:
-            content_transformed = encoded
-        transformed = torch.stack([trans(content_transformed) for trans in self.transformers]) # (class, N, D)
-        # (N, 1, class) * (N, class, D) -> (N, 1, D) -> (N, D)
+            transformed = torch.stack([trans(transformed) for trans in self.content_transformers])
+            transformed = torch.matmul(content_label.float().unsqueeze(1), transformed.view(self.n_content, batch_size, -1).transpose(0, 1)).squeeze(1).view(-1, C, H, W)
+        transformed = torch.stack([trans(transformed) for trans in self.transformers])
         transformed = torch.matmul(style_label.float().unsqueeze(1), transformed.view(self.n_style, batch_size, -1).transpose(0, 1)).squeeze(1).view(-1, C, H, W)
-        if auto:
-            assert torch.equal(encoded, transformed)
+#         if auto:
+#             assert torch.equal(encoded, transformed)
         return self.decoder(transformed)
 
 class ResnetGenerator(nn.Module):
@@ -719,9 +714,9 @@ class NLayerDiscriminator(nn.Module):
         self.model = nn.Sequential(*sequence)
         self.prediction = nn.Conv2d(ndf * nf_mult, 1, kernel_size=kw, stride=1, padding=padw) # output 1 channel prediction map
         if input_nclass:
-            self.classifier = nn.Conv2d(ndf * nf_mult, input_nclass, kernel_size=kw, stride=1, padding=padw) # output n class channel prediction map
+            self.classifier = nn.Conv2d(ndf * nf_mult, input_nclass + 1, kernel_size=kw, stride=1, padding=padw) # output n class channel prediction map
         if input_ncontent:
-            self.content_classifier = nn.Conv2d(ndf * nf_mult, input_ncontent, kernel_size=kw, stride=1, padding=padw) # output n content class channel prediction map
+            self.content_classifier = nn.Conv2d(ndf * nf_mult, input_ncontent + 1, kernel_size=kw, stride=1, padding=padw) # output n content class channel prediction map
 
     def forward(self, input):
         """Standard forward."""
@@ -829,4 +824,4 @@ class GaussianSmoothing(nn.Module):
         Returns:
             filtered (torch.Tensor): Filtered output.
         """
-        return self.conv(input, weight=self.weight, groups=self.groups, padding=1)
+        return self.conv(input, weight=self.weight, groups=self.groups, padding=2)

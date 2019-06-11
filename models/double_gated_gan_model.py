@@ -31,14 +31,14 @@ def remove_small_objects(out, min_size=64, connectivity=1, in_place=False):
 # Methodology: 
 # Neural Abstract Style Transfer for Chinese Traditional Painting
 # https://arxiv.org/pdf/1812.03264.pdf
-def mxdog(device, blur1, blur2, imgs, thres, gamma=1, epsilon=-1, phi=1):
+def mxdog(device, blur1, blur2, imgs, thres, gamma=50, epsilon=-0.1, phi=1):
     aux = xdog(blur1, blur2, imgs, gamma, epsilon, phi)
     mu = aux.mean((2, 3), True).expand_as(aux)
     aux = aux > mu
     mask = remove_small_objects(aux.to('cpu').numpy(), min_size=thres)
     return (aux * mask.to(device)).float()
 
-def mxdog_loss(device, blur1, blur2, content_img, output_img, style_img, thres=64):
+def mxdog_loss(device, blur1, blur2, content_img, output_img, style_img, thres=10):
     N, C, H, W = output_img.shape
     
     def gram_matrix(matrix):
@@ -58,7 +58,7 @@ def mxdog_loss(device, blur1, blur2, content_img, output_img, style_img, thres=6
     content_constraint_loss = (output_gram - content_gram).norm() / output_gram.numel()
     style_constraint_loss = (output_gram - style_gram).norm() / output_gram.numel()
 
-    loss = 0.01 * content_loss + content_constraint_loss + style_constraint_loss
+    loss = content_loss + content_constraint_loss + style_constraint_loss
     return loss
 
 class DoubleGatedGANModel(BaseModel):
@@ -96,7 +96,7 @@ class DoubleGatedGANModel(BaseModel):
         if is_train:
             parser.add_argument('--lambda_A', type=float, default=1.0, help='weight for auxilary loss')
             parser.add_argument('--lambda_B', type=float, default=10.0, help='weight for mxdog loss')
-            parser.add_argument('--lambda_identity', type=float, default=0.5, help='use identity mapping. Setting lambda_identity other than 0 has an effect of scaling the weight of the identity mapping loss. For example, if the weight of the identity loss should be 10 times smaller than the weight of the reconstruction loss, please set lambda_identity = 0.1')
+            parser.add_argument('--lambda_g', type=float, default=1, help='use identity mapping. Setting lambda_identity other than 0 has an effect of scaling the weight of the identity mapping loss. For example, if the weight of the identity loss should be 10 times smaller than the weight of the reconstruction loss, please set lambda_identity = 0.1')
 
         return parser
 
@@ -135,10 +135,6 @@ class DoubleGatedGANModel(BaseModel):
                                             opt.n_layers_D, opt.norm, opt.init_type, opt.init_gain, self.gpu_ids, opt.n_style, opt.n_content)
 
         if self.isTrain:
-            self.style_autoflag = torch.zeros(opt.batch_size, opt.n_style + 1)
-            self.style_autoflag[:, -1] = 1
-            self.content_autoflag = torch.zeros(opt.batch_size, opt.n_content + 1)
-            self.content_autoflag[:, -1] = 1
             self.fake_B_pool = ImagePool(opt.pool_size)  # create image buffer to store previously generated images
             # define loss functions
             self.criterionGAN = networks.GANLoss(opt.gan_mode).to(self.device)  # define GAN loss.
@@ -150,9 +146,9 @@ class DoubleGatedGANModel(BaseModel):
             self.optimizer_D = torch.optim.Adam(self.netD_A.parameters(), lr=opt.lr, betas=(opt.beta1, 0.999))
             self.optimizers.append(self.optimizer_G)
             self.optimizers.append(self.optimizer_D)
-            sigma = 0.5 #todo move to option
+            sigma = 1 #todo move to option
             k = 1.6
-            kernal_size = 3
+            kernal_size = 5
             self.blur1 = networks.GaussianSmoothing(opt.input_nc, kernal_size, sigma).to(self.device)
             self.blur2 = networks.GaussianSmoothing(opt.input_nc, kernal_size, sigma * k).to(self.device)
 
@@ -169,9 +165,14 @@ class DoubleGatedGANModel(BaseModel):
         self.real_B = input['B' if AtoB else 'A'].to(self.device)
         self.class_label_B = input['B_style_labels'].to(self.device)
         self.content_label_B = input['content_labels'].to(self.device)
-        self.one_hot_label = torch.zeros(self.opt.batch_size, self.opt.n_style + 1).to(self.device)
+        self.N = len(self.content_label_B)
+        self.style_autoflag = torch.zeros(self.N, self.opt.n_style + 1)
+        self.style_autoflag[:, -1] = 1
+        self.content_autoflag = torch.zeros(self.N, self.opt.n_content + 1)
+        self.content_autoflag[:, -1] = 1
+        self.one_hot_label = torch.zeros(self.N, self.opt.n_style + 1).to(self.device)
         self.one_hot_label.scatter_(1, self.class_label_B.unsqueeze(1), 1)
-        self.one_hot_content = torch.zeros(self.opt.batch_size, self.opt.n_content + 1).to(self.device)
+        self.one_hot_content = torch.zeros(self.N, self.opt.n_content + 1).to(self.device)
         self.one_hot_content.scatter_(1, self.content_label_B.unsqueeze(1), 1)
         self.image_paths = input['A_paths' if AtoB else 'B_paths']
 
@@ -179,7 +180,7 @@ class DoubleGatedGANModel(BaseModel):
         """Run forward pass; called by both functions <optimize_parameters> and <test>."""
         self.fake_B = self.netG_A(self.real_A, self.one_hot_label, content_label=self.one_hot_content).to(self.device)  # G_A(A)
         if self.isTrain:
-            self.rec = self.netG_A(self.real_A, self.style_autoflag, True, self.content_autoflag) # autoencoder
+            self.rec = self.netG_A(self.real_A, self.style_autoflag, True, self.one_hot_content) # autoencoder
             # self.content_only = self.netG_A(self.real_A, self.style_autoflag, content_label=self.one_hot_content) # no style transformation
             # self.style_only = self.netG_A(self.real_A, self.one_hot_label, content_label=self.content_autoflag) # no content transformation
             assert self.rec.shape == self.real_A.shape
@@ -187,7 +188,7 @@ class DoubleGatedGANModel(BaseModel):
             # assert self.style_only.shape == self.real_A.shape
         else:
             for i in range(self.opt.n_style):
-                flag = torch.zeros(self.opt.batch_size, self.opt.n_style + 1)
+                flag = torch.zeros(self.N, self.opt.n_style + 1)
                 flag[:, i] = 1
                 setattr(self, 'fake_B%d' % i, self.netG_A(self.real_A, flag, content_label=self.one_hot_content))
 
@@ -213,8 +214,10 @@ class DoubleGatedGANModel(BaseModel):
 
         prediction, styles, contents = self.netD_A(fake)
         self.loss_d_fake = self.criterionGAN(prediction, False)
-        self.loss_AC_fake = lambda_A * self.criterionAC(styles, expanded_label) # TODO: this was commented out in original implementation
-        self.loss_AC_content_fake = lambda_A * self.criterionAC(contents, expanded_content)
+        fake_label = torch.full_like(expanded_label, self.opt.n_style)
+        fake_content = torch.full_like(expanded_content, self.opt.n_content)
+        self.loss_AC_fake = lambda_A * self.criterionAC(styles, fake_label)
+        self.loss_AC_content_fake = lambda_A * self.criterionAC(contents, fake_content)
         loss_D = self.loss_d_real + self.loss_d_fake \
             + (self.loss_AC_style_real + self.loss_AC_content_real + self.loss_AC_fake + self.loss_AC_content_fake)
         loss_D.backward()

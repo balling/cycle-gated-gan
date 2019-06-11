@@ -72,8 +72,12 @@ class ContentLabelledDataset(BaseDataset):
             A_paths (str)    -- image paths
             B_paths (str)    -- image paths
         """
-        A_path = self.A_paths[index % self.A_size]  # make sure index is within then range
-        content = self.A_contents[index % self.A_size]
+        if self.opt.phase == 'test':
+            A_idx = index % self.A_size
+        else:
+            A_idx = random.randint(0, self.A_size - 1)
+        A_path = self.A_paths[A_idx]
+        content = self.A_contents[A_idx]
         # randomize the index for domain B to avoid fixed pairs.
         B_path, B_style = random.choice(self.B_images[content])
         A_img = Image.open(A_path).convert('RGB')
